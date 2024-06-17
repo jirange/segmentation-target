@@ -13,9 +13,11 @@ semseg/config/voc2012
 */__pycache__/
 semseg/dataset/voc2012/*
 
-semseg/dataset/target/*.bmp
-semseg/dataset/target/*.png
-semseg/dataset/target/*.json
+semseg/dataset/target/image/
+semseg/dataset/target/json/
+semseg/dataset/target/label/
+semseg/dataset/target/label-1/
+
 
 semseg/*.md
 semseg/LICENSE

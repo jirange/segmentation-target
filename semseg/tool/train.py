@@ -75,6 +75,8 @@ def check(args):
                         args.mask_h <= 2 * ((args.train_h - 1) // (8 * args.shrink_factor) + 1) - 1)
                 assert (args.mask_w % 2 == 1) and (args.mask_w >= 3) and (
                         args.mask_w <= 2 * ((args.train_h - 1) // (8 * args.shrink_factor) + 1) - 1)
+    elif args.arch == 'u':
+        assert (args.train_h ) % 8 == 0 and (args.train_w) % 8 == 0
     else:
         raise Exception('architecture not supported yet'.format(args.arch))
 
@@ -118,8 +120,8 @@ def main_worker(gpu, ngpus_per_node, argss):
             args.rank = args.rank * ngpus_per_node + gpu
         dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url, world_size=args.world_size, rank=args.rank)
 
-    # criterion = nn.CrossEntropyLoss(ignore_index=args.ignore_label)
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss(ignore_index=args.ignore_label)
+    # criterion = nn.CrossEntropyLoss()
     if args.arch == 'psp':
         from model.pspnet import PSPNet
         model = PSPNet(layers=args.layers, classes=args.classes, zoom_factor=args.zoom_factor, criterion=criterion)
@@ -132,11 +134,18 @@ def main_worker(gpu, ngpus_per_node, argss):
                        normalization_factor=args.normalization_factor, psa_softmax=args.psa_softmax, criterion=criterion)
         modules_ori = [model.layer0, model.layer1, model.layer2, model.layer3, model.layer4]
         modules_new = [model.psa, model.cls, model.aux]
+    elif args.arch == 'u':
+        from model.unet import UNet
+        model = UNet(layers=args.layers, classes=args.classes, criterion=criterion)
+        modules_ori = [model.layer0, model.layer1, model.layer2, model.layer3, model.layer4]
+        modules_new = [model.up_concat4, model.up_concat3, model.up_concat2, model.up_concat1, model.final_conv]
+
     params_list = []
     for module in modules_ori:
         params_list.append(dict(params=module.parameters(), lr=args.base_lr))
     for module in modules_new:
         params_list.append(dict(params=module.parameters(), lr=args.base_lr * 10))
+
     args.index_split = 5
     optimizer = torch.optim.SGD(params_list, lr=args.base_lr, momentum=args.momentum, weight_decay=args.weight_decay)
     if args.sync_bn:
@@ -204,13 +213,12 @@ def main_worker(gpu, ngpus_per_node, argss):
     #     transform.Normalize(mean=mean, std=std)])
     blank = [0,0,0]
     train_transform = transform.Compose([
-        transform.RandShift([args.shift_min, args.shift_max], padding=blank),
-        transform.RandRotate([args.rotate_min, args.rotate_max], padding=blank),
+        transform.RandShift([args.shift_min, args.shift_max], padding=blank, ignore_label=args.ignore_label),
+        transform.RandRotate([args.rotate_min, args.rotate_max], padding=blank, ignore_label=args.ignore_label),
         transform.RandomHorizontalFlip(),
         # transforms.ColorJitter(brightness=args.brightness, contrast=args.contrast),  ###### todo
-        # transform.RandColor([0.8,1.2],[-0.2,0.2]),
         transform.RandColor(args.brightness, args.contrast),
-        transform.Crop([args.train_h, args.train_w], crop_type='center', padding=blank),
+        transform.Crop([args.train_h, args.train_w], crop_type='center', padding=blank, ignore_label=args.ignore_label),
         transform.RandomGaussianBlur(),
         transform.ToTensor(),
         transform.Normalize(mean=mean, std=std)])
@@ -232,8 +240,8 @@ def main_worker(gpu, ngpus_per_node, argss):
 
     if args.evaluate:
         val_transform = transform.Compose([
-            # transform.Crop([args.train_h, args.train_w], crop_type='center', padding=mean, ignore_label=args.ignore_label),
-            transform.Crop([args.train_h, args.train_w], crop_type='center', padding=mean),
+            transform.Crop([args.train_h, args.train_w], crop_type='center', padding=blank, ignore_label=args.ignore_label),
+            # transform.Crop([args.train_h, args.train_w], crop_type='center', padding=mean),
             transform.ToTensor(),
             transform.Normalize(mean=mean, std=std)])
         val_data = dataset.SemData(split='val', data_root=args.data_root, data_list=args.val_list, transform=val_transform)
@@ -283,78 +291,150 @@ def train(train_loader, model, optimizer, epoch):
     model.train()
     end = time.time()
     max_iter = args.epochs * len(train_loader)
-    for i, (input, target) in enumerate(train_loader):
-        data_time.update(time.time() - end)
-        if args.zoom_factor != 8:
-            h = int((target.size()[1] - 1) / 8 * args.zoom_factor + 1)
-            w = int((target.size()[2] - 1) / 8 * args.zoom_factor + 1)
-            # 'nearest' mode doesn't support align_corners mode and 'bilinear' mode is fine for downsampling
-            target = F.interpolate(target.unsqueeze(1).float(), size=(h, w), mode='bilinear', align_corners=True).squeeze(1).long()
-        input = input.cuda(non_blocking=True)
-        target = target.cuda(non_blocking=True)
-        output, main_loss, aux_loss = model(input, target)
-        if not args.multiprocessing_distributed:
-            main_loss, aux_loss = torch.mean(main_loss), torch.mean(aux_loss)
-        loss = main_loss + args.aux_weight * aux_loss
+    if args.arch == 'u':
+        for i, (input, target) in enumerate(train_loader):
+            data_time.update(time.time() - end)
 
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+            input = input.cuda(non_blocking=True)
+            target = target.cuda(non_blocking=True)
+            output, main_loss = model(input, target)
 
-        n = input.size(0)
-        if args.multiprocessing_distributed:
-            main_loss, aux_loss, loss = main_loss.detach() * n, aux_loss * n, loss * n  # not considering ignore pixels
-            count = target.new_tensor([n], dtype=torch.long)
-            dist.all_reduce(main_loss), dist.all_reduce(aux_loss), dist.all_reduce(loss), dist.all_reduce(count)
-            n = count.item()
-            main_loss, aux_loss, loss = main_loss / n, aux_loss / n, loss / n
+            if not args.multiprocessing_distributed:
+                main_loss = torch.mean(main_loss)
+            loss = main_loss
 
-        intersection, union, target = intersectionAndUnionGPU(output, target, args.classes, args.ignore_label)
-        if args.multiprocessing_distributed:
-            dist.all_reduce(intersection), dist.all_reduce(union), dist.all_reduce(target)
-        intersection, union, target = intersection.cpu().numpy(), union.cpu().numpy(), target.cpu().numpy()
-        intersection_meter.update(intersection), union_meter.update(union), target_meter.update(target)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
-        accuracy = sum(intersection_meter.val) / (sum(target_meter.val) + 1e-10)
-        main_loss_meter.update(main_loss.item(), n)
-        aux_loss_meter.update(aux_loss.item(), n)
-        loss_meter.update(loss.item(), n)
-        batch_time.update(time.time() - end)
-        end = time.time()
+            n = input.size(0)
+            if args.multiprocessing_distributed:
+                main_loss, loss = main_loss.detach() * n, loss * n  # not considering ignore pixels
+                count = target.new_tensor([n], dtype=torch.long)
+                dist.all_reduce(main_loss), dist.all_reduce(loss), dist.all_reduce(count)
+                n = count.item()
+                main_loss, loss = main_loss / n, loss / n
 
-        current_iter = epoch * len(train_loader) + i + 1
-        current_lr = poly_learning_rate(args.base_lr, current_iter, max_iter, power=args.power)
-        for index in range(0, args.index_split):
-            optimizer.param_groups[index]['lr'] = current_lr
-        for index in range(args.index_split, len(optimizer.param_groups)):
-            optimizer.param_groups[index]['lr'] = current_lr * 10
-        remain_iter = max_iter - current_iter
-        remain_time = remain_iter * batch_time.avg
-        t_m, t_s = divmod(remain_time, 60)
-        t_h, t_m = divmod(t_m, 60)
-        remain_time = '{:02d}:{:02d}:{:02d}'.format(int(t_h), int(t_m), int(t_s))
+            intersection, union, target = intersectionAndUnionGPU(output, target, args.classes, args.ignore_label)
+            if args.multiprocessing_distributed:
+                dist.all_reduce(intersection), dist.all_reduce(union), dist.all_reduce(target)
+            intersection, union, target = intersection.cpu().numpy(), union.cpu().numpy(), target.cpu().numpy()
+            intersection_meter.update(intersection), union_meter.update(union), target_meter.update(target)
 
-        if (i + 1) % args.print_freq == 0 and main_process():
-            logger.info('Epoch: [{}/{}][{}/{}] '
-                        'Data {data_time.val:.3f} ({data_time.avg:.3f}) '
-                        'Batch {batch_time.val:.3f} ({batch_time.avg:.3f}) '
-                        'Remain {remain_time} '
-                        'MainLoss {main_loss_meter.val:.4f} '
-                        'AuxLoss {aux_loss_meter.val:.4f} '
-                        'Loss {loss_meter.val:.4f} '
-                        'Accuracy {accuracy:.4f}.'.format(epoch+1, args.epochs, i + 1, len(train_loader),
-                                                          batch_time=batch_time,
-                                                          data_time=data_time,
-                                                          remain_time=remain_time,
-                                                          main_loss_meter=main_loss_meter,
-                                                          aux_loss_meter=aux_loss_meter,
-                                                          loss_meter=loss_meter,
-                                                          accuracy=accuracy))
-        if main_process():
-            writer.add_scalar('loss_train_batch', main_loss_meter.val, current_iter)
-            writer.add_scalar('mIoU_train_batch', np.mean(intersection / (union + 1e-10)), current_iter)
-            writer.add_scalar('mAcc_train_batch', np.mean(intersection / (target + 1e-10)), current_iter)
-            writer.add_scalar('allAcc_train_batch', accuracy, current_iter)
+            accuracy = sum(intersection_meter.val) / (sum(target_meter.val) + 1e-10)
+            main_loss_meter.update(main_loss.item(), n)
+            loss_meter.update(loss.item(), n)
+
+            batch_time.update(time.time() - end)
+            end = time.time()
+
+            current_iter = epoch * len(train_loader) + i + 1
+            current_lr = poly_learning_rate(args.base_lr, current_iter, max_iter, power=args.power)
+            for index in range(0, args.index_split):
+                optimizer.param_groups[index]['lr'] = current_lr
+            for index in range(args.index_split, len(optimizer.param_groups)):
+                optimizer.param_groups[index]['lr'] = current_lr * 10
+            remain_iter = max_iter - current_iter
+            remain_time = remain_iter * batch_time.avg
+            t_m, t_s = divmod(remain_time, 60)
+            t_h, t_m = divmod(t_m, 60)
+            remain_time = '{:02d}:{:02d}:{:02d}'.format(int(t_h), int(t_m), int(t_s))
+
+            if (i + 1) % args.print_freq == 0 and main_process():
+                logger.info('Epoch: [{}/{}][{}/{}] '
+                            'Data {data_time.val:.3f} ({data_time.avg:.3f}) '
+                            'Batch {batch_time.val:.3f} ({batch_time.avg:.3f}) '
+                            'Remain {remain_time} '
+                            'MainLoss {main_loss_meter.val:.4f} '
+                            'Loss {loss_meter.val:.4f} '
+                            'Accuracy {accuracy:.4f}.'.format(epoch+1, args.epochs, i + 1, len(train_loader),
+                                                            batch_time=batch_time,
+                                                            data_time=data_time,
+                                                            remain_time=remain_time,
+                                                            main_loss_meter=main_loss_meter,
+                                                            loss_meter=loss_meter,
+                                                            accuracy=accuracy))
+            if main_process():
+                writer.add_scalar('loss_train_batch', main_loss_meter.val, current_iter)
+                writer.add_scalar('mIoU_train_batch', np.mean(intersection / (union + 1e-10)), current_iter)
+                writer.add_scalar('mAcc_train_batch', np.mean(intersection / (target + 1e-10)), current_iter)
+                writer.add_scalar('allAcc_train_batch', accuracy, current_iter)
+
+    else:
+        for i, (input, target) in enumerate(train_loader):
+            data_time.update(time.time() - end)
+            
+            if args.zoom_factor != 8:
+                h = int((target.size()[1] - 1) / 8 * args.zoom_factor + 1)
+                w = int((target.size()[2] - 1) / 8 * args.zoom_factor + 1)
+                # 'nearest' mode doesn't support align_corners mode and 'bilinear' mode is fine for downsampling
+                target = F.interpolate(target.unsqueeze(1).float(), size=(h, w), mode='bilinear', align_corners=True).squeeze(1).long()
+            input = input.cuda(non_blocking=True)
+            target = target.cuda(non_blocking=True)
+            output, main_loss, aux_loss = model(input, target)
+
+            if not args.multiprocessing_distributed:
+                main_loss, aux_loss = torch.mean(main_loss), torch.mean(aux_loss)
+            loss = main_loss + args.aux_weight * aux_loss
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            n = input.size(0)
+            if args.multiprocessing_distributed:
+                main_loss, aux_loss, loss = main_loss.detach() * n, aux_loss * n, loss * n  # not considering ignore pixels
+                count = target.new_tensor([n], dtype=torch.long)
+                dist.all_reduce(main_loss), dist.all_reduce(aux_loss), dist.all_reduce(loss), dist.all_reduce(count)
+                n = count.item()
+                main_loss, aux_loss, loss = main_loss / n, aux_loss / n, loss / n
+
+            intersection, union, target = intersectionAndUnionGPU(output, target, args.classes, args.ignore_label)
+            if args.multiprocessing_distributed:
+                dist.all_reduce(intersection), dist.all_reduce(union), dist.all_reduce(target)
+            intersection, union, target = intersection.cpu().numpy(), union.cpu().numpy(), target.cpu().numpy()
+            intersection_meter.update(intersection), union_meter.update(union), target_meter.update(target)
+
+            accuracy = sum(intersection_meter.val) / (sum(target_meter.val) + 1e-10)
+            main_loss_meter.update(main_loss.item(), n)
+            aux_loss_meter.update(aux_loss.item(), n)
+            loss_meter.update(loss.item(), n)
+            batch_time.update(time.time() - end)
+            end = time.time()
+
+            current_iter = epoch * len(train_loader) + i + 1
+            current_lr = poly_learning_rate(args.base_lr, current_iter, max_iter, power=args.power)
+            for index in range(0, args.index_split):
+                optimizer.param_groups[index]['lr'] = current_lr
+            for index in range(args.index_split, len(optimizer.param_groups)):
+                optimizer.param_groups[index]['lr'] = current_lr * 10
+            remain_iter = max_iter - current_iter
+            remain_time = remain_iter * batch_time.avg
+            t_m, t_s = divmod(remain_time, 60)
+            t_h, t_m = divmod(t_m, 60)
+            remain_time = '{:02d}:{:02d}:{:02d}'.format(int(t_h), int(t_m), int(t_s))
+
+            if (i + 1) % args.print_freq == 0 and main_process():
+                logger.info('Epoch: [{}/{}][{}/{}] '
+                            'Data {data_time.val:.3f} ({data_time.avg:.3f}) '
+                            'Batch {batch_time.val:.3f} ({batch_time.avg:.3f}) '
+                            'Remain {remain_time} '
+                            'MainLoss {main_loss_meter.val:.4f} '
+                            'AuxLoss {aux_loss_meter.val:.4f} '
+                            'Loss {loss_meter.val:.4f} '
+                            'Accuracy {accuracy:.4f}.'.format(epoch+1, args.epochs, i + 1, len(train_loader),
+                                                            batch_time=batch_time,
+                                                            data_time=data_time,
+                                                            remain_time=remain_time,
+                                                            main_loss_meter=main_loss_meter,
+                                                            aux_loss_meter=aux_loss_meter,
+                                                            loss_meter=loss_meter,
+                                                            accuracy=accuracy))
+            if main_process():
+                writer.add_scalar('loss_train_batch', main_loss_meter.val, current_iter)
+                writer.add_scalar('mIoU_train_batch', np.mean(intersection / (union + 1e-10)), current_iter)
+                writer.add_scalar('mAcc_train_batch', np.mean(intersection / (target + 1e-10)), current_iter)
+                writer.add_scalar('allAcc_train_batch', accuracy, current_iter)
 
     iou_class = intersection_meter.sum / (union_meter.sum + 1e-10)
     accuracy_class = intersection_meter.sum / (target_meter.sum + 1e-10)

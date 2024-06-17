@@ -64,7 +64,7 @@ class SemData(Dataset):
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)  # convert cv2 read image from BGR order to RGB order
         image = np.float32(image)
         label = cv2.imread(label_path, cv2.IMREAD_GRAYSCALE)  # GRAY 1 channel ndarray with shape H * W
-        label = label / 255         # 将像素值从 [0, 255] 转换到 [0, 1] 范围，为了可视化
+        # label = label / 255         # 将像素值从 [0, 255] 转换到 [0, 1] 范围，为了可视化  todo
         if image.shape[0] != label.shape[0] or image.shape[1] != label.shape[1]:
             raise (RuntimeError("Image & label shape mismatch: " + image_path + " " + label_path + "\n"))
         if self.transform is not None:

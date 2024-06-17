@@ -60,6 +60,8 @@ def check(args):
                         args.mask_h <= 2 * ((args.train_h - 1) // (8 * args.shrink_factor) + 1) - 1)
                 assert (args.mask_w % 2 == 1) and (args.mask_w >= 3) and (
                         args.mask_w <= 2 * ((args.train_h - 1) // (8 * args.shrink_factor) + 1) - 1)
+    elif args.arch == 'u':
+        assert (args.train_h ) % 8 == 0 and (args.train_w ) % 8 == 0
     else:
         raise Exception('architecture not supported yet'.format(args.arch))
 
@@ -104,6 +106,10 @@ def main():
             model = PSANet(layers=args.layers, classes=args.classes, zoom_factor=args.zoom_factor, compact=args.compact,
                            shrink_factor=args.shrink_factor, mask_h=args.mask_h, mask_w=args.mask_w,
                            normalization_factor=args.normalization_factor, psa_softmax=args.psa_softmax, pretrained=False)
+        elif args.arch == 'u':
+            from model.unet import UNet
+            model = UNet(layers=args.layers, classes=args.classes, pretrained=False)
+
         logger.info(model)
         model = torch.nn.DataParallel(model).cuda()
         cudnn.benchmark = True

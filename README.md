@@ -294,6 +294,124 @@ base_lr: 0.004
 epoch [50/50]: mIoU/mAcc/allAcc 0.9192/0.9567/0.9813.  101 epoch 50 未收敛  70epoch 50也收敛了  val result: mIoU/mAcc/allAcc 0.4909/0.4964/0.9928
 
 -----
-还是unet试一试吧
+pspnet
+old:label/255 dont set ignore-label
+new: png-255 to 1 set ignore_label=255 
+epoch [50/50]: mIoU/mAcc/allAcc 0.9155/0.9540/0.9803
+[2024-06-16 16:02:50,422 INFO test.py line 248 3480] Eval result: mIoU/mAcc/allAcc 0.9051/0.9361/0.9821.
+[2024-06-16 16:02:50,422 INFO test.py line 250 3480] Class_0 result: iou/accuracy 0.9804/0.9935, name: background.
+[2024-06-16 16:02:50,422 INFO test.py line 250 3480] Class_1 result: iou/accuracy 0.8299/0.8787, name: target.
+
+lr 0.002->0.01
+
+[2024-06-17 13:15:47,670 INFO test.py line 254 3480] Eval result: mIoU/mAcc/allAcc 0.9203/0.9533/0.9849.
+[2024-06-17 13:15:47,670 INFO test.py line 256 3480] Class_0 result: iou/accuracy 0.9834/0.9927, name: background.
+[2024-06-17 13:15:47,670 INFO test.py line 256 3480] Class_1 result: iou/accuracy 0.8573/0.9139, name: target.
+epoch [50/50]: mIoU/mAcc/allAcc 0.9275/0.9606/0.9832 
+[2024-06-17 13:36:41,268 INFO test.py line 254 2560] Eval result: mIoU/mAcc/allAcc 0.9271/0.9574/0.9862.
+[2024-06-17 13:36:41,268 INFO test.py line 256 2560] Class_0 result: iou/accuracy 0.9848/0.9934, name: background.
+[2024-06-17 13:36:41,268 INFO test.py line 256 2560] Class_1 result: iou/accuracy 0.8693/0.9213, name: target.
+Train result at epoch [80/80]: mIoU/mAcc/allAcc 0.9375/0.9689/0.9856.
+
+[2024-06-17 13:44:53,689 INFO test.py line 254 2100] Eval result: mIoU/mAcc/allAcc 0.9296/0.9576/0.9868.
+[2024-06-17 13:44:53,689 INFO test.py line 256 2100] Class_0 result: iou/accuracy 0.9854/0.9940, name: background.
+[2024-06-17 13:44:53,689 INFO test.py line 256 2100] Class_1 result: iou/accuracy 0.8738/0.9213, name: target.
+epoch [100/100]: mIoU/mAcc/allAcc 0.9397/0.9680/0.9862.
+80-100 没什么增长 趋于平稳 不是不涨 是增速变慢了
+
+
+[2024-06-17 14:04:14,605 INFO test.py line 254 3480] Eval result: mIoU/mAcc/allAcc 0.9381/0.9644/0.9884.
+[2024-06-17 14:04:14,605 INFO test.py line 256 3480] Class_0 result: iou/accuracy 0.9872/0.9944, name: background.
+[2024-06-17 14:04:14,605 INFO test.py line 256 3480] Class_1 result: iou/accuracy 0.8890/0.9343, name: target.
+epoch [150/150]: mIoU/mAcc/allAcc 0.9542/0.9752/0.9896.
+
+[2024-06-17 15:28:29,945 INFO test.py line 254 5780] Eval result: mIoU/mAcc/allAcc 0.9506/0.9729/0.9908.
+[2024-06-17 15:28:29,945 INFO test.py line 256 5780] Class_0 result: iou/accuracy 0.9898/0.9953, name: background.
+[2024-06-17 15:28:29,945 INFO test.py line 256 5780] Class_1 result: iou/accuracy 0.9114/0.9505, name: target.
+epoch [250/250]: mIoU/mAcc/allAcc 0.9685/0.9839/0.9929.
+-----
 
 -----
+还是unet试一试吧 batch_size =8
+mIoU: 95.24; mPA: 97.92; Accuracy: 99.03        50+50
+
+mIoU: 95.91; mPA: 98.23; Accuracy: 99.17        50+50+50  
+best-pth
+===>background: Iou-99.04; Recall (equal to the PA)-99.4; Precision-99.64
+===>target:     Iou-92.48; Recall (equal to the PA)-97.04; Precision-95.17
+===> mIoU: 95.76; mPA: 98.22; Accuracy: 99.14
+last-pth  selected
+===>background: Iou-99.08; Recall (equal to the PA)-99.44; Precision-99.64
+===>target:     Iou-92.76; Recall (equal to the PA)-97.02; Precision-95.47
+===> mIoU: 95.92; mPA: 98.23; Accuracy: 99.17
+
+mIoU: 95.97; mPA: 98.06; Accuracy: 99.19   50+50+50+50      last
+===>background: Iou-99.09; Recall (equal to the PA)-99.5; Precision-99.59
+===>target:     Iou-92.85; Recall (equal to the PA)-96.61; Precision-95.98
+===> mIoU: 95.97; mPA: 98.06; Accuracy: 99.19
+50+50+50+50+50 no progress
+
+
+-----
+
+## 添加unet
+sc create --name seg-u  --image "harbor.smoa.cc/public/xsemseg:v1.4" --gpu 1 --cmd "source /dataset/vsitongwu/.bashrc && cd /dataset/vsitongwu/LJC/TargetSeg/semseg && conda activate animate && sh tool/train.sh target unet50" --arch ampere --debug
+sc create --name seg-utrain  --image "harbor.smoa.cc/public/xsemseg:v1.4" --gpu 1 --cmd "source /dataset/vsitongwu/.bashrc && cd /dataset/vsitongwu/LJC/TargetSeg/semseg && conda activate animate && sh tool/train.sh target unet50" --arch ampere 
+
+sc create --name seg-u  --image "harbor.smoa.cc/public/xsemseg:v1.4" --gpu 1 --cmd "source /dataset/vsitongwu/.bashrc && cd /dataset/vsitongwu/LJC/TargetSeg/semseg && conda activate animate && sh tool/mytest.sh target unet50" --arch ampere --debug
+
+TypeError: UNet.forward() takes 2 positional arguments but 3 were given
+### 报错解决
+
+### 训练效果
+epoch [50/50]: mIoU/mAcc/allAcc 0.8022/0.8830/0.9548
+[2024-06-17 11:51:46,024 INFO test.py line 254 24] Eval result: mIoU/mAcc/allAcc 0.8431/0.9261/0.9666.
+[2024-06-17 11:51:46,024 INFO test.py line 256 24] Class_0 result: iou/accuracy 0.9634/0.9767, name: background.
+[2024-06-17 11:51:46,024 INFO test.py line 256 24] Class_1 result: iou/accuracy 0.7228/0.8756, name: target.
+
+epoch [50/50]: mIoU/mAcc/allAcc 0.7992/0.8817/0.9538.
+[2024-06-17 12:13:20,263 INFO test.py line 254 24] Eval result: mIoU/mAcc/allAcc 0.8382/0.9342/0.9645.
+[2024-06-17 12:13:20,263 INFO test.py line 256 24] Class_0 result: iou/accuracy 0.9610/0.9720, name: background.
+[2024-06-17 12:13:20,263 INFO test.py line 256 24] Class_1 result: iou/accuracy 0.7153/0.8964, name: target.
+
+lr 0.002->0.001
+epoch [50/50]: mIoU/mAcc/allAcc 0.7976/0.8888/0.9526. 继续训练20个epoch也没有提高
+[2024-06-17 12:19:28,000 INFO test.py line 254 3480] Eval result: mIoU/mAcc/allAcc 0.8289/0.9404/0.9611.
+[2024-06-17 12:19:28,000 INFO test.py line 256 3480] Class_0 result: iou/accuracy 0.9572/0.9663, name: background.
+[2024-06-17 12:19:28,000 INFO test.py line 256 3480] Class_1 result: iou/accuracy 0.7007/0.9146, name: target.
+
+lr 0.002->0.01
+epoch [50/50]: mIoU/mAcc/allAcc 0.9124/0.9504/0.9820.
+[2024-06-17 12:50:48,904 INFO test.py line 254 3480] Eval result: mIoU/mAcc/allAcc 0.9248/0.9587/0.9857.
+[2024-06-17 12:50:48,904 INFO test.py line 256 3480] Class_0 result: iou/accuracy 0.9842/0.9924, name: background.
+[2024-06-17 12:50:48,904 INFO test.py line 256 3480] Class_1 result: iou/accuracy 0.8654/0.9251, name: target.
+
+[80/80]: mIoU/mAcc/allAcc 0.9252/0.9617/0.9846.
+[2024-06-17 13:10:12,547 INFO test.py line 254 2560] Eval result: mIoU/mAcc/allAcc 0.9326/0.9592/0.9874.
+[2024-06-17 13:10:12,547 INFO test.py line 256 2560] Class_0 result: iou/accuracy 0.9861/0.9943, name: background.
+[2024-06-17 13:10:12,547 INFO test.py line 256 2560] Class_1 result: iou/accuracy 0.8791/0.9241, name: target.
+
+epoch [100/100]: mIoU/mAcc/allAcc 0.9295/0.9610/0.9856.
+[2024-06-17 13:30:14,353 INFO test.py line 254 2100] Eval result: mIoU/mAcc/allAcc 0.9382/0.9633/0.9885.
+[2024-06-17 13:30:14,353 INFO test.py line 256 2100] Class_0 result: iou/accuracy 0.9873/0.9947, name: background.
+[2024-06-17 13:30:14,353 INFO test.py line 256 2100] Class_1 result: iou/accuracy 0.8892/0.9318, name: target.
+
+epoch [150/150]: mIoU/mAcc/allAcc 0.9435/0.9700/0.9886.
+[2024-06-17 13:38:39,038 INFO test.py line 254 3480] Eval result: mIoU/mAcc/allAcc 0.9530/0.9730/0.9913.
+[2024-06-17 13:38:39,038 INFO test.py line 256 3480] Class_0 result: iou/accuracy 0.9904/0.9959, name: background.
+[2024-06-17 13:38:39,038 INFO test.py line 256 3480] Class_1 result: iou/accuracy 0.9157/0.9501, name: target.
+
+epoch [200/200]: mIoU/mAcc/allAcc 0.9513/0.9760/0.9902.
+[2024-06-17 13:48:43,304 INFO test.py line 254 3480] Eval result: mIoU/mAcc/allAcc 0.9612/0.9767/0.9929.
+[2024-06-17 13:48:43,304 INFO test.py line 256 3480] Class_0 result: iou/accuracy 0.9921/0.9969, name: background.
+[2024-06-17 13:48:43,304 INFO test.py line 256 3480] Class_1 result: iou/accuracy 0.9304/0.9566, name: target.
+
+epoch [300/300]: mIoU/mAcc/allAcc 0.9650/0.9834/0.9930.
+[2024-06-17 14:07:52,429 INFO test.py line 254 5780] Eval result: mIoU/mAcc/allAcc 0.9718/0.9844/0.9948.
+[2024-06-17 14:07:52,429 INFO test.py line 256 5780] Class_0 result: iou/accuracy 0.9943/0.9974, name: background.
+[2024-06-17 14:07:52,429 INFO test.py line 256 5780] Class_1 result: iou/accuracy 0.9493/0.9714, name: target.
+
+epoch [400/400]: mIoU/mAcc/allAcc 0.9757/0.9888/0.9952.
+[2024-06-17 15:24:17,201 INFO test.py line 254 5780] Eval result: mIoU/mAcc/allAcc 0.9770/0.9869/0.9958.
+[2024-06-17 15:24:17,201 INFO test.py line 256 5780] Class_0 result: iou/accuracy 0.9954/0.9980, name: background.
+[2024-06-17 15:24:17,201 INFO test.py line 256 5780] Class_1 result: iou/accuracy 0.9587/0.9758, name: target.
